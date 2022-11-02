@@ -4,6 +4,7 @@ from yolact_edge.utils.augmentations import SSDAugmentation, SSDAugmentationVide
 from yolact_edge.utils.functions import MovingAverage, SavePath
 from yolact_edge.layers.modules import MultiBoxLoss
 from yolact_edge.layers.modules.optical_flow_loss import OpticalFlowLoss
+from yolact_edge.utils.mlflow_helper import MlFlowHelper
 from yolact_edge.yolact import Yolact
 import os
 import sys
@@ -30,6 +31,7 @@ import random
 # Oof
 import eval as eval_script
 
+
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
@@ -39,10 +41,10 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--batch_size', default=8, type=int,
                     help='Batch size for training')
 parser.add_argument('--resume', default=None, type=str,
-                    help='Checkpoint state_dict file to resume training from. If this is "interrupt"'\
+                    help='Checkpoint state_dict file to resume training from. If this is "interrupt"' \
                          ', the model will resume training from the interrupt file.')
 parser.add_argument('--start_iter', default=0, type=int,
-                    help='Resume training at this iter. If this is -1, the iteration will be'\
+                    help='Resume training at this iter. If this is -1, the iteration will be' \
                          'determined from the file name.')
 parser.add_argument('--random_seed', default=42, type=int,
                     help='Random seed used across all workers')
@@ -64,6 +66,10 @@ parser.add_argument('--gamma', default=None, type=float,
                     help='For each lr step, what to multiply the lr by. Leave as None to read this from the config.')
 parser.add_argument('--save_folder', default='weights/',
                     help='Directory for saving checkpoint models')
+parser.add_argument('--backbone_folder', default='weights/',
+                    help='Directory to load backbone model')
+parser.add_argument('--model_name', default='yolact_edge',
+                    help='Model name to export')
 parser.add_argument('--log_folder', default='../../logs/',
                     help='Directory for saving Tensorboard logs')
 parser.add_argument('--config', default=None,
@@ -161,7 +167,9 @@ def train(rank, args):
     logger = logging.getLogger("yolact.train")
 
     w = SummaryHelper(distributed_rank=rank, log_dir=os.path.join(args.log_folder, cfg.name))
+    ml = MlFlowHelper()
     w.add_text("argv", " ".join(sys.argv))
+    ml.log_params(cfg)
     logger.info("Args: {}".format(" ".join(sys.argv)))
     import git
     with git.Repo(search_parent_directories=True) as repo:
@@ -206,13 +214,13 @@ def train(rank, args):
                                      configs=cfg.dataset,
                                      transform=BaseTransformVideo(MEANS))
         collate_fn = collate_fn_youtube_vis
-    
+
     elif cfg.dataset.name == 'FlyingChairs':
         dataset = FlyingChairs(image_path=cfg.dataset.trainval_images,
                                info_file=cfg.dataset.trainval_info)
 
         collate_fn = collate_fn_flying_chairs
-    
+
     else:
         dataset = COCODetection(image_path=cfg.dataset.train_images,
                                 info_file=cfg.dataset.train_info,
@@ -253,23 +261,23 @@ def train(rank, args):
             args.start_iter = SavePath.from_str(args.resume).iteration
     else:
         logger.info('Initializing weights...')
-        yolact_net.init_weights(backbone_path=args.save_folder + cfg.backbone.path)
-
+        yolact_net.init_weights(backbone_path=args.backbone_folder + cfg.backbone.path)
 
     if cfg.flow.train_flow:
         criterion = OpticalFlowLoss()
 
     else:
         criterion = MultiBoxLoss(num_classes=cfg.num_classes,
-                                pos_threshold=cfg.positive_iou_threshold,
-                                neg_threshold=cfg.negative_iou_threshold,
-                                negpos_ratio=3)
+                                 pos_threshold=cfg.positive_iou_threshold,
+                                 neg_threshold=cfg.negative_iou_threshold,
+                                 negpos_ratio=3)
 
     if args.cuda:
         net.cuda(rank)
 
         if misc.is_distributed_initialized():
-            net = nn.parallel.DistributedDataParallel(net, device_ids=[rank], output_device=rank, broadcast_buffers=False,
+            net = nn.parallel.DistributedDataParallel(net, device_ids=[rank], output_device=rank,
+                                                      broadcast_buffers=False,
                                                       find_unused_parameters=True)
 
     optimizer = optim.SGD(filter(lambda x: x.requires_grad, net.parameters()),
@@ -283,7 +291,7 @@ def train(rank, args):
 
     epoch_size = len(dataset) // args.batch_size // args.num_gpus
     num_epochs = math.ceil(cfg.max_iter / epoch_size)
-    
+
     # Which learning rate adjustment step are we on? lr' = lr * gamma ^ step_index
     step_index = 0
 
@@ -302,7 +310,7 @@ def train(rank, args):
 
     if cfg.dataset.joint:
         joint_infinite_sampler = InfiniteSampler(joint_dataset, seed=args.random_seed, num_replicas=args.num_gpus,
-                                           rank=rank, shuffle=True)
+                                                 rank=rank, shuffle=True)
         joint_train_sampler = build_batch_data_sampler(joint_infinite_sampler, images_per_batch=args.batch_size)
         joint_data_loader = data.DataLoader(joint_dataset,
                                             num_workers=args.num_workers,
@@ -315,10 +323,10 @@ def train(rank, args):
     time_avg = MovingAverage()
     data_time_avg = MovingAverage(10)
 
-    global loss_types # Forms the print order
-    loss_avgs  = { k: MovingAverage(100) for k in loss_types }
+    global loss_types  # Forms the print order
+    loss_avgs = {k: MovingAverage(100) for k in loss_types}
 
-    def backward_and_log(prefix, net_outs, targets, masks, num_crowds, extra_loss=None):
+    def backward_and_log(prefix, net_outs, targets, masks, num_crowds, extra_loss=None, iter=0):
         optimizer.zero_grad()
 
         out = net_outs["pred_outs"]
@@ -341,6 +349,7 @@ def train(rank, args):
         for k in losses:
             loss_avgs[k].add(losses[k].item())
             w.add_scalar('{prefix}/{key}'.format(prefix=prefix, key=k), losses[k].item())
+            ml.log_metrics('{prefix}/{key}'.format(prefix=prefix, key=k), losses[k].item(), step=iter)
 
         return losses
 
@@ -349,7 +358,7 @@ def train(rank, args):
     try:
         for epoch in range(num_epochs):
             # Resume from start_iter
-            if (epoch+1)*epoch_size < iteration:
+            if (epoch + 1) * epoch_size < iteration:
                 continue
 
             while True:
@@ -360,7 +369,7 @@ def train(rank, args):
                 if iteration != args.start_iter:
                     data_time_avg.add(data_time)
                 # Stop if we've reached an epoch if we're resuming from start_iter
-                if iteration == (epoch+1)*epoch_size:
+                if iteration == (epoch + 1) * epoch_size:
                     break
 
                 # Stop at the configured number of iterations even if mid-epoch
@@ -377,25 +386,28 @@ def train(rank, args):
                         # Reset the loss averages because things might have changed
                         for avg in loss_avgs:
                             avg.reset()
-                
+
                 # If a config setting was changed, remove it from the list so we don't keep checking
                 if changed:
                     cfg.delayed_settings = [x for x in cfg.delayed_settings if x[0] > iteration]
 
                 # Warm up by linearly interpolating the learning rate from some smaller value
                 if cfg.lr_warmup_until > 0 and iteration <= cfg.lr_warmup_until and cfg.lr_warmup_init < args.lr:
-                    set_lr(optimizer, (args.lr - cfg.lr_warmup_init) * (iteration / cfg.lr_warmup_until) + cfg.lr_warmup_init)
+                    set_lr(optimizer,
+                           (args.lr - cfg.lr_warmup_init) * (iteration / cfg.lr_warmup_until) + cfg.lr_warmup_init)
 
                 elif cfg.lr_schedule == 'cosine':
                     set_lr(optimizer, args.lr * ((math.cos(math.pi * iteration / cfg.max_iter) + 1.) * .5))
 
                 # Adjust the learning rate at the given iterations, but also if we resume from past that iteration
-                while cfg.lr_schedule == 'step' and step_index < len(cfg.lr_steps) and iteration >= cfg.lr_steps[step_index]:
+                while cfg.lr_schedule == 'step' and step_index < len(cfg.lr_steps) and iteration >= cfg.lr_steps[
+                    step_index]:
                     step_index += 1
                     set_lr(optimizer, args.lr * (args.gamma ** step_index))
 
                 global lr
                 w.add_scalar('meta/lr', lr)
+                ml.log_metrics('meta/lr', lr, step=iteration)
 
                 if cfg.dataset.name == "FlyingChairs":
                     imgs_1, imgs_2, flows = prepare_flow_data(datum)
@@ -405,11 +417,11 @@ def train(rank, args):
 
                     losses = criterion(net_outs, flows)
 
-                    losses = { k: v.mean() for k,v in losses.items() } # Mean here because Dataparallel
+                    losses = {k: v.mean() for k, v in losses.items()}  # Mean here because Dataparallel
                     loss = sum([losses[k] for k in losses])
 
                     # Backprop
-                    loss.backward() # Do this to free up vram even if loss is not finite
+                    loss.backward()  # Do this to free up vram even if loss is not finite
                     if torch.isfinite(loss).item():
                         optimizer.step()
 
@@ -417,7 +429,9 @@ def train(rank, args):
                     for k in losses:
                         loss_avgs[k].add(losses[k].item())
                         w.add_scalar('loss/%s' % k, losses[k].item())
-                
+                        ml.log_metrics('loss/%s' % k, losses[k].item(), step=iteration)
+
+
                 elif cfg.dataset.joint or not cfg.dataset.is_video:
                     if cfg.dataset.joint:
                         joint_datum = next(joint_data_loader_iter)
@@ -428,9 +442,9 @@ def train(rank, args):
                         images, targets, masks, num_crowds = prepare_data(datum)
                     extras = {"backbone": "full", "interrupt": False,
                               "moving_statistics": {"aligned_feats": []}}
-                    net_outs = net(images,extras=extras)
+                    net_outs = net(images, extras=extras)
                     run_name = "joint" if cfg.dataset.joint else "compute"
-                    losses = backward_and_log(run_name, net_outs, targets, masks, num_crowds)
+                    losses = backward_and_log(run_name, net_outs, targets, masks, num_crowds, iter=iteration)
 
                 # Forward Pass
                 if cfg.dataset.is_video:
@@ -480,8 +494,8 @@ def train(rank, args):
 
                         losses = backward_and_log("warp", net_outs, targets, masks, num_crowds, extra_loss=extra_loss)
 
-                cur_time  = time.time()
-                elapsed   = cur_time - last_time
+                cur_time = time.time()
+                elapsed = cur_time - last_time
                 last_time = cur_time
                 w.add_scalar('meta/data_time', data_time)
                 w.add_scalar('meta/iter_time', elapsed)
@@ -491,7 +505,8 @@ def train(rank, args):
                     time_avg.add(elapsed)
 
                 if iteration % 10 == 0:
-                    eta_str = str(datetime.timedelta(seconds=(cfg.max_iter-iteration) * time_avg.get_avg())).split('.')[0]
+                    eta_str = \
+                        str(datetime.timedelta(seconds=(cfg.max_iter - iteration) * time_avg.get_avg())).split('.')[0]
                     if torch.cuda.is_available():
                         max_mem_mb = torch.cuda.max_memory_allocated() / 1024.0 / 1024.0
                         # torch.cuda.reset_max_memory_allocated()
@@ -514,7 +529,7 @@ time: {time}  data_time: {data_time}  lr: {lr}  {memory}\
                     ))
 
                 if rank == 0 and iteration % 100 == 0:
-                    
+
                     if cfg.flow.train_flow:
                         import flowiz as fz
                         from yolact_edge.layers.warp_utils import deform_op
@@ -525,14 +540,15 @@ time: {time}  data_time: {data_time}  lr: {lr}  {memory}\
                             vis_data.append(pred_flow)
 
                         deform_gt = deform_op(imgs_2, flows)
-                        flows_pred = [F.interpolate(x, size=flow_size, mode='bilinear', align_corners=False) for x in net_outs]
+                        flows_pred = [F.interpolate(x, size=flow_size, mode='bilinear', align_corners=False) for x in
+                                      net_outs]
                         deform_preds = [deform_op(imgs_2, x) for x in flows_pred]
 
                         vis_data.append(F.interpolate(flows, size=tgt_size, mode='area'))
 
                         vis_data = [F.interpolate(flow[:1], size=tgt_size) for flow in vis_data]
                         vis_data = [fz.convert_from_flow(flow[0].data.cpu().numpy().transpose(1, 2, 0))
-                                        .transpose(2, 0, 1).astype('float32') / 255
+                                    .transpose(2, 0, 1).astype('float32') / 255
                                     for flow in vis_data]
 
                         def convert_image(image):
@@ -547,6 +563,7 @@ time: {time}  data_time: {data_time}  lr: {lr}  {memory}\
                             image = np.clip(image, -1, 1)
                             image = image[::-1]
                             return image
+
                         vis_data.append(convert_image(imgs_1))
                         vis_data.append(convert_image(imgs_2))
                         vis_data.append(convert_image(deform_gt))
@@ -564,7 +581,7 @@ time: {time}  data_time: {data_time}  lr: {lr}  {memory}\
 
                         vis_data = [F.interpolate(flow[:1], size=tgt_size) for flow in vis_data]
                         vis_data = [fz.convert_from_flow(flow[0].data.cpu().numpy().transpose(1, 2, 0))
-                                        .transpose(2, 0, 1).astype('float32') / 255
+                                    .transpose(2, 0, 1).astype('float32') / 255
                                     for flow in vis_data]
                         input_image = F.interpolate(images, size=tgt_size, mode='area')
                         input_image = input_image[0]
@@ -588,7 +605,7 @@ time: {time}  data_time: {data_time}  lr: {lr}  {memory}\
 
                     logger.info('Saving state, iter: {}'.format(iteration))
                     yolact_net.save_weights(save_path(epoch, iteration))
-
+                    ml.log_artifact(save_path(epoch, iteration), 'weights')
                     if args.keep_latest and latest is not None:
                         if args.keep_latest_interval <= 0 or iteration % args.keep_latest_interval != args.save_interval:
                             logger.info('Deleting old save...')
@@ -600,7 +617,7 @@ time: {time}  data_time: {data_time}  lr: {lr}  {memory}\
             if args.validation_epoch > 0:
                 if epoch % args.validation_epoch == 0 and epoch > 0:
                     if rank == 0:
-                        compute_validation_map(yolact_net, val_dataset)
+                        compute_validation_map(yolact_net, val_dataset, iteration, tracker=ml)
                     misc.barrier()
 
     except KeyboardInterrupt:
@@ -611,13 +628,14 @@ time: {time}  data_time: {data_time}  lr: {lr}  {memory}\
             print('Stopping early. Saving network...')
             # Delete previous copy of the interrupted network so we don't spam the weights folder
             SavePath.remove_interrupt(args.save_folder)
-
             yolact_net.save_weights(save_path(epoch, repr(iteration) + '_interrupt'))
         return
 
     if rank == 0:
         yolact_net.save_weights(save_path(epoch, iteration))
-
+        ml.log_model(yolact_net, args.model_name)
+        ml.export_onnx(yolact_net, f'{args.model_name}.onnx')
+        ml.register_model(artifact_path=args.model_name, name=args.model_name)
 
 def set_lr(optimizer, new_lr):
     global lr
@@ -628,7 +646,7 @@ def set_lr(optimizer, new_lr):
 
 def prepare_flow_data(datum):
     imgs_1, imgs_2, flows = datum
-    
+
     if args.cuda:
         imgs_1 = Variable(imgs_1.cuda(non_blocking=True), requires_grad=False)
         imgs_2 = Variable(imgs_2.cuda(non_blocking=True), requires_grad=False)
@@ -643,11 +661,13 @@ def prepare_flow_data(datum):
 
 def prepare_data(datum):
     images, (targets, masks, num_crowds) = datum
-    
+
     if args.cuda:
         images = Variable(images.cuda(non_blocking=True), requires_grad=False)
-        targets = [Variable(ann.cuda(non_blocking=True), requires_grad=False) if ann is not None else ann for ann in targets]
-        masks = [Variable(mask.cuda(non_blocking=True), requires_grad=False) if mask is not None else mask for mask in masks]
+        targets = [Variable(ann.cuda(non_blocking=True), requires_grad=False) if ann is not None else ann for ann in
+                   targets]
+        masks = [Variable(mask.cuda(non_blocking=True), requires_grad=False) if mask is not None else mask for mask in
+                 masks]
     else:
         images = Variable(images, requires_grad=False)
         targets = [Variable(ann, requires_grad=False) for ann in targets]
@@ -655,12 +675,13 @@ def prepare_data(datum):
 
     return images, targets, masks, num_crowds
 
+
 def compute_validation_loss(net, data_loader, criterion):
     global loss_types
 
     with torch.no_grad():
         losses = {}
-        
+
         # Don't switch to eval mode because we want to get losses
         iterations = 0
         for datum in data_loader:
@@ -668,7 +689,7 @@ def compute_validation_loss(net, data_loader, criterion):
             out = net(images)
 
             _losses = criterion(out, targets, masks, num_crowds)
-            
+
             for k, v in _losses.items():
                 v = v.mean().item()
                 if k in losses:
@@ -679,29 +700,31 @@ def compute_validation_loss(net, data_loader, criterion):
             iterations += 1
             if args.validation_size <= iterations * args.batch_size:
                 break
-        
+
         for k in losses:
             losses[k] /= iterations
-            
-        
+
         loss_labels = sum([[k, losses[k]] for k in loss_types if k in losses], [])
         print(('Validation ||' + (' %s: %.3f |' * len(losses)) + ')') % tuple(loss_labels), flush=True)
 
-def compute_validation_map(yolact_net, dataset):
+
+def compute_validation_map(yolact_net, dataset, iteration, tracker):
     with torch.no_grad():
         yolact_net.eval()
         logger = logging.getLogger("yolact.eval")
         logger.info("Computing validation mAP (this may take a while)...")
-        eval_script.evaluate(yolact_net, dataset, train_mode=True, train_cfg=cfg)
+        eval_script.evaluate(yolact_net, dataset, train_mode=True, train_cfg=cfg, iteration=iteration, tracker=tracker)
         yolact_net.train()
 
+
 def setup_eval():
-    eval_script.parse_args(['--no_bar', '--fast_eval', '--max_images='+str(args.validation_size)])
+    eval_script.parse_args(['--no_bar', '--fast_eval', '--max_images=' + str(args.validation_size)])
+
 
 if __name__ == '__main__':
     if args.num_gpus is None:
         args.num_gpus = torch.cuda.device_count()
     if args.num_gpus > 1:
-        mp.spawn(train, nprocs=args.num_gpus, args=(args, ), daemon=False)
+        mp.spawn(train, nprocs=args.num_gpus, args=(args,), daemon=False)
     else:
         train(0, args=args)

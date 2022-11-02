@@ -1087,7 +1087,7 @@ class Yolact(nn.Module):
 
     def __init__(self, training=True):
         super().__init__()
-
+        self._export_extras = None
         self.backbone = construct_backbone(cfg.backbone)
 
         self.training = training
@@ -1722,7 +1722,8 @@ class Yolact(nn.Module):
 
     def forward(self, x, extras=None):
         """ The input should be of size [batch_size, 3, img_h, img_w] """
-
+        if extras is None:
+            extras = self._export_extras
         if cfg.flow.train_flow:
             return self.forward_flow(extras)
 

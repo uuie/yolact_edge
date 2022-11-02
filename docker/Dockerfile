@@ -5,7 +5,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y  \
     git wget build-essential \
     python3 python3-setuptools python3-pip python3-dev python3-tk \
-    ffmpeg libsm6 libxext6
+    ffmpeg libsm6 libxext6 s3fs
 RUN ln -svf /usr/bin/python3 /usr/bin/python
 RUN python -m pip install --upgrade --force pip
 
@@ -22,7 +22,7 @@ RUN apt-get update && \
 
 
 # # Install dependencies
-RUN pip install cython opencv-python pillow matplotlib GitPython termcolor tensorboard packaging
+RUN pip install cython opencv-python pillow matplotlib GitPython termcolor tensorboard packaging mlflow torchsummary boto3
 RUN pip install git+https://github.com/haotian-liu/cocoapi.git#"egg=pycocotools&subdirectory=PythonAPI"
 RUN pip install torch==1.7.1+cu110 torchvision==0.8.2+cu110 -f https://download.pytorch.org/whl/torch_stable.html
 
@@ -31,9 +31,9 @@ WORKDIR /root
 RUN git clone https://github.com/grimoire/torch2trt_dynamic.git torch2trt_dynamic && \
     cd torch2trt_dynamic && \
     python setup.py develop
-
+ADD . /root/yolact_edge
+ADD docker/start_training.sh /start_training.sh
 # installing plugins for torch2trt_dynamic
-WORKDIR /root
 
 RUN apt install -y software-properties-common && \
     wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null && \
@@ -47,5 +47,4 @@ RUN apt install -y software-properties-common && \
 ENV AMIRSTAN_LIBRARY_PATH=/root/amirstan_plugin/lib
 
 WORKDIR /root/yolact_edge
-
 ENV LANG C.UTF-8
