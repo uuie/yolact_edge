@@ -5,7 +5,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y  \
     git wget build-essential \
     python3 python3-setuptools python3-pip python3-dev python3-tk \
-    ffmpeg libsm6 libxext6 s3fs
+    ffmpeg libsm6 libxext6 s3fs vim
 RUN ln -svf /usr/bin/python3 /usr/bin/python
 RUN python -m pip install --upgrade --force pip
 

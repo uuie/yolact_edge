@@ -1,12 +1,13 @@
-import datetime
-import io
 import json
-import torch
-import mlflow
+import logging
 import os
 
+import mlflow
+import torch
+
 from yolact_edge.data import Config
-from yolact_edge.yolact import Yolact
+
+logger = logging.getLogger("yolact.helper")
 
 
 class MlFlowHelper(object):
@@ -35,22 +36,21 @@ class MlFlowHelper(object):
     def log_model(self, net, name):
         mlflow.pytorch.log_model(net, name)
 
-    def export_onnx(self, net, name, input_names=['input'], input_shape=(1, 3, 280, 480)):
+    def export_onnx(self, net, name, input_names=['input'], input_shape=(1, 3, 500, 500)):
         net._export_extras = {"backbone": "full",
                               "interrupt": False,
                               "keep_statistics": False,
                               "moving_statistics": None}
         net.detect.use_fast_nms = False
-        name = '%s-%dx%d.onnx' % (name[:-5] if name.endswith('.onnx') else name, input_shape[2], input_shape[3])
+        name = '%s-%dx%d.onnx' % (name[:-5] if name.endswith('.onnx') else name, input_shape[3], input_shape[2])
         output_onnx = os.path.join('/tmp', name)
-        inputs = torch.randn(*input_shape).cuda()
         torch.onnx.export(
             net,
-            inputs,
+            torch.randn(*list(input_shape)),
             output_onnx,
             opset_version=11,
             input_names=input_names,
-            output_names=["pred_outs"]
+            output_names=["pred_outs"],
         )
         mlflow.log_artifact(output_onnx, 'export')
 
@@ -60,9 +60,3 @@ class MlFlowHelper(object):
     def register_model(self, artifact_path, name):
         model_uri = "runs:/{run_id}/{artifact_path}".format(run_id=self._run.info.run_id, artifact_path=artifact_path)
         mlflow.register_model(model_uri, name)
-
-
-if __name__ == '__main__':
-    net = Yolact()
-    net.eval()
-    net.to('cuda')
