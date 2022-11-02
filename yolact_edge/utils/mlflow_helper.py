@@ -15,6 +15,8 @@ class MlFlowHelper(object):
         mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI'))
         mlflow.set_experiment(expid)
         self._run = mlflow.start_run()
+        print("====== start experiment with storage s3://mlflow/%s" % self._run.info.experiment_id)
+        print("====== start run run_id: %s" % self._run.info.run_id)
 
     def log_params(self, config):
         def to_desc(val, prefix=None):
