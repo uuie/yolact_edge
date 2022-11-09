@@ -259,14 +259,16 @@ youtube_vis_dataset = dataset_base.copy({
     'is_video': True
 })
 bright_dataset = dataset_base.copy({
+    'max_size': 560,  # 560 x 315
     'name': 'bright 2022',
     'train_images': os.path.join('/data/', os.getenv('TRAINING_SET')),
     'train_info': os.path.join('/data/', os.getenv('TRAINING_SET'), 'training.json'),
     'valid_images': os.path.join('/data/', os.getenv('TRAINING_SET')),
     'valid_info': os.path.join('/data/', os.getenv('TRAINING_SET'), 'validation.json'),
     'calib_images': None,
-    'class_names': ('tooth'),
+    'class_names': ('tooth',),
     'label_map': {1: 1},
+    'num_classes': 2,
 })
 
 # ----------------------- TRANSFORMS ----------------------- #
@@ -622,8 +624,8 @@ coco_base_config = Config({
     'augment_random_rot90': False,
 
     # Discard detections with width and height smaller than this (in absolute width and height)
-    'discard_box_width': 4 / 550,
-    'discard_box_height': 4 / 550,
+    'discard_box_width': 4 / 560,
+    'discard_box_height': 4 / 560,
 
     # If using batchnorm anywhere in the backbone, freeze the batchnorm layer during training.
     # Note: any additional batch norm layers after the backbone will not be frozen.
@@ -754,12 +756,12 @@ yolact_base_config = coco_base_config.copy({
     'num_classes': len(coco2017_dataset.class_names) + 1,
 
     # Image Size
-    'max_size': 550,
+    'max_size': 560,
 
     # Training params
     'lr_schedule': 'step',
     'lr_steps': (280000, 600000, 700000, 750000),
-    'max_iter': int(os.getenv('MAX_ITER', 400)),
+    'max_iter': int(os.getenv('MAX_ITER', 400000)),
 
     'flow': flow_base,
 
@@ -833,7 +835,8 @@ yolact_edge_config = yolact_base_config.copy({
     'torch2trt_protonet_int8': True,
     'torch2trt_fpn': True,
     'torch2trt_prediction_module': True,
-    'use_fast_nms': False
+    'use_fast_nms': False,
+    'mask_proto_debug': False,
 })
 
 yolact_edge_im300_config = yolact_base_config.copy({

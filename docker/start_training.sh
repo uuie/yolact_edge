@@ -12,4 +12,4 @@ export EXPID=${EXPID:-'yolact_edge'}
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-'0'}
 export NPROC_PER_NODE=$(echo ${CUDA_VISIBLE_DEVICES} |tr -s ',' '\n'|wc -l)
 # start traning
-python train.py --dataset bright_dataset --backbone_folder /data/backbones/ --batch_size 2
+python train.py --dataset bright_dataset --backbone_folder /data/backbones/ --batch_size 12

@@ -13,7 +13,7 @@ import numpy as np
 import sklearn.cluster as cluster
 
 dump_file = 'weights/bboxes.pkl'
-max_size = 550
+max_size = 560
 
 num_scale_clusters = 5
 num_aspect_ratio_clusters = 3

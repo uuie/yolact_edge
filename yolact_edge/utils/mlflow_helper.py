@@ -6,6 +6,8 @@ import mlflow
 import torch
 
 from yolact_edge.data import Config
+from yolact_edge.utils.pytorch_export_contrib_ops import register as register_cus_op
+from yolact_edge.utils.pytorch_export_contrib_ops import unregister as unregister_cus_op
 
 logger = logging.getLogger("yolact.helper")
 
@@ -38,23 +40,47 @@ class MlFlowHelper(object):
     def log_model(self, net, name):
         mlflow.pytorch.log_model(net, name)
 
-    def export_onnx(self, net, name, input_names=['input'], input_shape=(1, 3, 500, 500)):
+    def export_onnx(self, net, name, input_img=None, input_names=['input'], input_shape=(1, 3, 500, 500)):
         net._export_extras = {"backbone": "full",
                               "interrupt": False,
                               "keep_statistics": False,
                               "moving_statistics": None}
-        net.detect.use_fast_nms = False
+
+        net.training = False
+        if input_img is not None:
+            from yolact_edge.utils.augmentations import FastBaseTransform
+            input_img = torch.from_numpy(input_img).float()
+            if torch.cuda.is_available():
+                input_img = input_img.cuda()
+
+            input_data = FastBaseTransform()(input_img.unsqueeze(0))
+            input_shape = input_data.shape
+        else:
+            input_data = torch.randn(*list(input_shape))
+        extras = {"backbone": "full", "interrupt": False, "keep_statistics": False, "moving_statistics": None}
+
+        preds = net(input_data, extras=extras)["pred_outs"]
         name = '%s-%dx%d.onnx' % (name[:-5] if name.endswith('.onnx') else name, input_shape[3], input_shape[2])
         output_onnx = os.path.join('/tmp', name)
-        torch.onnx.export(
-            net,
-            torch.randn(*list(input_shape)),
-            output_onnx,
-            opset_version=11,
-            input_names=input_names,
-            output_names=["pred_outs"],
-        )
-        mlflow.log_artifact(output_onnx, 'export')
+        try:
+            register_cus_op()
+            torch.onnx.export(
+                net,
+                input_data,
+                output_onnx,
+                opset_version=11,
+                input_names=input_names,
+                output_names=["pred_outs"],
+            )
+            mlflow.log_artifact(output_onnx, 'export')
+        finally:
+            unregister_cus_op()
+
+        if input_img is not None:
+            from eval import prep_display
+            import cv2
+            img_numpy = prep_display(preds, input_img, None, None, undo_transform=False)
+            cv2.imwrite('/root/yolact_edge/save_out.jpg', img_numpy)
 
     def log_artifact(self, fp, path='model_out'):
         mlflow.log_artifact(fp, path)

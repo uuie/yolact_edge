@@ -66,7 +66,7 @@ class FlyingChairs(data.Dataset):
 
         flow = flow * 2 / np.array([w, h]) * 8
 
-        target_size = (550, 550) # FIXME: hard code image size
+        target_size = (560, 560) # FIXME: hard code image size
 
         img1 = cv2.resize(img1, target_size)
         img2 = cv2.resize(img2, target_size)

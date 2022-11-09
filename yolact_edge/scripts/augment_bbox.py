@@ -10,7 +10,7 @@ from numpy import random
 import numpy as np
 
 
-max_image_size = 550
+max_image_size = 560
 augment_idx = 0
 dump_file = 'weights/bboxes_aug.pkl'
 box_file = 'weights/bboxes.pkl'

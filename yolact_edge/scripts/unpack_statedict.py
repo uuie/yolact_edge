@@ -6,7 +6,7 @@ import sys, os
 # be arsed to do path concatenation so I'd rather type out this comment
 
 print('Loading state dict...')
-state = torch.load(sys.argv[1])
+state = torch.load(sys.argv[1]) if torch.cuda.is_available() else torch.load(sys.argv[1], map_location=torch.device('cpu'))
 
 if not os.path.exists(sys.argv[2]):
 	os.mkdir(sys.argv[2])

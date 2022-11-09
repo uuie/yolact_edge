@@ -169,6 +169,9 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
         h, w, _ = img.shape
 
     with timer.env('Postprocess'):
+        print('==============  eval args  ==================')
+        print(args)
+        print('================= eval args ===============')
         t = postprocess(dets_out, w, h, visualize_lincomb=args.display_lincomb,
                         crop_masks=args.crop,
                         score_threshold=args.score_threshold)
@@ -178,7 +181,7 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
         if cfg.eval_mask_branch:
             # Masks are drawn on the GPU, so don't copy
             masks = t[3][:args.top_k]
-        classes, scores, boxes = [x[:args.top_k].cpu().numpy() for x in t[:3]]
+        classes, scores, boxes = [x[:args.top_k].cpu().detach().numpy() for x in t[:3]]
 
     num_dets_to_consider = min(args.top_k, classes.shape[0])
     for j in range(num_dets_to_consider):
@@ -237,7 +240,9 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
     # Then draw the stuff that needs to be done on the cpu
     # Note, make sure this is a uint8 tensor or opencv will not anti alias text for whatever reason
     img_numpy = (img_gpu * 255).byte().cpu().numpy()
-
+    print('======================== classes =================')
+    print( cfg.dataset.class_names)
+    print('======================== classes =================')
     if args.display_text or args.display_bboxes:
         for j in reversed(range(num_dets_to_consider)):
             x1, y1, x2, y2 = boxes[j, :]
@@ -599,7 +604,9 @@ def badhash(x):
 
 
 def evalimage(net: Yolact, path: str, save_path: str = None, detections: Detections = None, image_id=None):
-    frame = torch.from_numpy(cv2.imread(path)).cuda().float()
+    frame = torch.from_numpy(cv2.imread(path)).float()
+    if torch.cuda.is_available():
+        frame = frame.cuda()
     batch = FastBaseTransform()(frame.unsqueeze(0))
 
     if cfg.flow.warp_mode != 'none':

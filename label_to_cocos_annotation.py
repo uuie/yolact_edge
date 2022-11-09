@@ -10,7 +10,7 @@ def label_to_cocos(working_dir, validation_ratio=0.1):
     img_id = 0
     ann_id = 0
     all_files = []
-    for root, dirs, files in os.walk(".", topdown=False):
+    for root, dirs, files in os.walk(working_dir, topdown=False):
         for name in files:
             if not name.endswith('.jpg'):
                 continue
@@ -85,8 +85,8 @@ def label_to_cocos(working_dir, validation_ratio=0.1):
 
 
 if __name__ == '__main__':
-    training_data, valid_data = label_to_cocos('/home/chris/workspace/yolact_edge/traindata')
-    with open(os.path.join('/home/chris/workspace/yolact_edge/traindata', 'training.json'), 'w') as fp:
+    training_data, valid_data = label_to_cocos('/home/chris/Downloads/bucket')
+    with open(os.path.join('/home/chris/Downloads/bucket', 'training.json'), 'w') as fp:
         fp.write(json.dumps(training_data, indent=2))
-    with open(os.path.join('/home/chris/workspace/yolact_edge/traindata', 'validation.json'), 'w') as fp:
+    with open(os.path.join('/home/chris/Downloads/bucket', 'validation.json'), 'w') as fp:
         fp.write(json.dumps(valid_data, indent=2))

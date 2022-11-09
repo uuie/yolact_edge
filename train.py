@@ -634,7 +634,13 @@ time: {time}  data_time: {data_time}  lr: {lr}  {memory}\
     if rank == 0:
         yolact_net.save_weights(save_path(epoch, iteration))
         ml.log_model(yolact_net, args.model_name)
-        ml.export_onnx(yolact_net, f'{args.model_name}.onnx')
+        input_img = dataset.pull_image(0)
+        # print(input_img)
+        # print(dir(input_img))
+        # print(input_img.shape[0], input_img.shape[1])
+        # images, (targets, masks, num_crowds) = next(data_loader_iter)
+        # input = images[0].reshape(1, *(images[0].shape))
+        ml.export_onnx(yolact_net, f'{args.model_name}.onnx', input_img=input_img)
         ml.register_model(artifact_path=args.model_name, name=args.model_name)
 
 def set_lr(optimizer, new_lr):

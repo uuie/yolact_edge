@@ -595,7 +595,7 @@ class MobileNetV2Backbone(nn.Module):
 
     def init_backbone(self, path):
         """ Initializes the backbone weights for training. """
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path) if torch.cuda.is_available() else torch.load(path, map_location=torch.device('cpu')) 
 
         checkpoint.pop('classifier.1.weight')
         checkpoint.pop('classifier.1.bias')
